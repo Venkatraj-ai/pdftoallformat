@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Converter - Free PDF to Any Format</title>
+<!-- Monetag -->
+<meta name="monetag" content="0409854fd6933fe3a58ba91894481983">
+<!-- /Monetag -->
+<style>
+  :root{--bg:#f5f7fb;--card:#fff;--ink:#1c2333;--muted:#6b7488;--brand:#4f46e5;--brand2:#7c3aed;--line:#e3e7f0}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;padding:32px 16px;text-align:center}
+  header h1{margin:0 0 6px;font-size:1.9rem}
+  header p{margin:0;opacity:.9}
+  main{max-width:860px;margin:-24px auto 40px;padding:0 16px}
+  .card{background:var(--card);border-radius:16px;box-shadow:0 6px 24px rgba(20,30,70,.08);padding:20px;margin-bottom:16px}
+  #drop{border:2px dashed #b9c0d8;border-radius:14px;padding:36px 16px;text-align:center;cursor:pointer;transition:.2s}
+  #drop.over{background:#eef0ff;border-color:var(--brand)}
+  #drop b{color:var(--brand)}
+  #fileinfo{margin-top:12px;color:var(--muted);font-size:.95rem;text-align:center}
+  h2{font-size:1.05rem;margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .grid button{border:1px solid var(--line);background:#fff;border-radius:12px;padding:14px 8px;cursor:pointer;font-size:.95rem;text-align:center;transition:.15s}
+  .grid button small{display:block;color:var(--muted);margin-top:3px;font-size:.75rem}
+  .grid button:hover:not(:disabled){border-color:var(--brand);transform:translateY(-2px);box-shadow:0 4px 12px rgba(79,70,229,.15)}
+  .grid button:disabled{opacity:.45;cursor:not-allowed}
+  #status{min-height:24px;font-size:.95rem}
+  .bar{height:8px;background:#e8ebf5;border-radius:6px;overflow:hidden;margin-top:8px;display:none}
+  .bar div{height:100%;width:0;background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .15s}
+  .note{font-size:.85rem;color:var(--muted);line-height:1.5}
+  .err{color:#c0262d}.ok{color:#1a7f4b}
+  footer{text-align:center;color:var(--muted);font-size:.85rem;padding-bottom:30px}
+</style>
+</head>
+<body>
+<header>
+  <h1>📄 PDF Converter</h1>
+  <p>PDF-a Word, Excel, PowerPoint, Image, Text &amp; more-ku maathunga. Free. Files upload aagaadhu.</p>
+</header>
+<main>
+  <div class="card">
+    <div id="drop">
+      <div style="font-size:2rem">⬆️</div>
+      <div><b>PDF file-a inga drop pannunga</b> illa click panni select pannunga</div>
+      <input id="file" type="file" accept="application/pdf,.pdf" hidden>
+    </div>
+    <div id="fileinfo">Innum file select pannala</div>
+  </div>
+
+  <div class="card">
+    <h2>Enna format-ku maathanum?</h2>
+    <div class="grid" id="formats"></div>
+    <div class="bar" id="bar"><div id="barfill"></div></div>
+    <div id="status"></div>
+  </div>
+
+  <div class="card note">
+    🔒 <b>Privacy:</b> Ungal PDF ungal browser-layae process aagum, entha server-kum pogaadhu.<br>
+    ⚠️ <b>Note:</b> Word / Excel / PowerPoint conversion text-based. Scanned PDF (image mattum irukkura) na text varaadhu. Appo "PowerPoint" (page images) illa "Images" use pannunga. Complex layout-um tables-um 100% same-a varaadhu.
+  </div>
+</main>
+<footer>Made with ❤️ | Free PDF Converter</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const $ = id => document.getElementById(id);
+let pdf = null, baseName = 'document', textCache = null;
+
+const FORMATS = [
+  {id:'docx', label:'Word', sub:'.doc'},
+  {id:'xlsx', label:'Excel', sub:'.xlsx'},
+  {id:'pptx', label:'PowerPoint', sub:'.pptx'},
+  {id:'png',  label:'PNG Images', sub:'.png / zip'},
+  {id:'jpg',  label:'JPG Images', sub:'.jpg / zip'},
+  {id:'txt',  label:'Text', sub:'.txt'},
+  {id:'html', label:'HTML', sub:'.html'},
+  {id:'md',   label:'Markdown', sub:'.md'},
+  {id:'csv',  label:'CSV', sub:'.csv'},
+  {id:'json', label:'JSON', sub:'.json'},
+  {id:'rtf',  label:'RTF', sub:'.rtf'},
+];
+$('formats').innerHTML = FORMATS.map(f =>
+  `<button data-f="${f.id}" disabled>${f.label}<small>${f.sub}</small></button>`).join('');
+
+function status(msg, cls=''){ $('status').className = cls; $('status').textContent = msg; }
+function progress(p){ $('bar').style.display = p==null?'none':'block'; $('barfill').style.width = (p||0)*100+'%'; }
+function download(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+}
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// ---------- file loading ----------
+const drop = $('drop'), input = $('file');
+drop.onclick = () => input.click();
+input.onchange = e => e.target.files[0] && loadFile(e.target.files[0]);
+['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => {e.preventDefault(); drop.classList.add('over');}));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => {e.preventDefault(); drop.classList.remove('over');}));
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; f && loadFile(f); });
+
+async function loadFile(file){
+  if(!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf'){ status('PDF file mattum select pannunga.', 'err'); return; }
+  try{
+    status('PDF load aaguthu...');
+    const buf = await file.arrayBuffer();
+    pdf = await pdfjsLib.getDocument({data: buf}).promise;
+    baseName = file.name.replace(/\.pdf$/i, '') || 'document';
+    textCache = null;
+    $('fileinfo').textContent = `${file.name} • ${pdf.numPages} page(s) • ${(file.size/1024/1024).toFixed(2)} MB`;
+    document.querySelectorAll('#formats button').forEach(b => b.disabled = false);
+    status('Ready! Ippo oru format select pannunga.', 'ok');
+  }catch(err){
+    console.error(err); pdf = null;
+    document.querySelectorAll('#formats button').forEach(b => b.disabled = true);
+    status('Indha PDF open aagala (password protected-a irukkalaam).', 'err');
+  }
+}
+
+// ---------- text extraction ----------
+// returns pages -> lines -> cells (strings)
+async function getText(){
+  if(textCache) return textCache;
+  const pages = [];
+  for(let p=1; p<=pdf.numPages; p++){
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    const items = tc.items.filter(i => i.str && i.str.trim() !== '')
+      .map(i => ({s:i.str, x:i.transform[4], y:i.transform[5], w:i.width, h:Math.abs(i.transform[3])||10}));
+    items.sort((a,b) => b.y - a.y || a.x - b.x);
+    const lines = [];
+    for(const it of items){
+      const last = lines[lines.length-1];
+      if(last && Math.abs(last.y - it.y) < Math.max(3, it.h*0.5)) last.items.push(it);
+      else lines.push({y:it.y, items:[it]});
+    }
+    pages.push(lines.map(l => {
+      l.items.sort((a,b)=>a.x-b.x);
+      const cells = []; let cur = l.items[0].s, prevEnd = l.items[0].x + l.items[0].w;
+      for(let i=1;i<l.items.length;i++){
+        const it = l.items[i], gap = it.x - prevEnd;
+        if(gap > Math.max(12, it.h*1.2)){ cells.push(cur.trim()); cur = it.s; }
+        else cur += (gap > 1.5 ? ' ' : '') + it.s;
+        prevEnd = it.x + it.w;
+      }
+      cells.push(cur.trim());
+      return cells;
+    }));
+    progress(p/pdf.numPages*0.8);
+  }
+  textCache = pages;
+  return pages;
+}
+const lineText = l => l.join(' ');
+function hasText(pages){ return pages.some(p => p.length); }
+
+// ---------- page images ----------
+async function renderPage(n, type, scale=2){
+  const page = await pdf.getPage(n);
+  const vp = page.getViewport({scale});
+  const c = document.createElement('canvas');
+  c.width = vp.width; c.height = vp.height;
+  const ctx = c.getContext('2d');
+  if(type === 'jpg'){ ctx.fillStyle = '#fff'; ctx.fillRect(0,0,c.width,c.height); }
+  await page.render({canvasContext: ctx, viewport: vp}).promise;
+  const mime = type === 'jpg' ? 'image/jpeg' : 'image/png';
+  return {dataUrl: c.toDataURL(mime, 0.92), w: vp.width, h: vp.height, canvas: c, mime};
+}
+
+// ---------- converters ----------
+const conv = {
+  async txt(){
+    const pages = await getText();
+    this.need(pages);
+    const out = pages.map((p,i) => `--- Page ${i+1} ---\n` + p.map(lineText).join('\n')).join('\n\n');
+    download(new Blob([out], {type:'text/plain;charset=utf-8'}), baseName + '.txt');
+  },
+  async md(){
+    const pages = await getText(); this.need(pages);
+    const out = pages.map((p,i) => `## Page ${i+1}\n\n` + p.map(lineText).join('\n\n')).join('\n\n---\n\n');
+    download(new Blob([out], {type:'text/markdown;charset=utf-8'}), baseName + '.md');
+  },
+  async html(){
+    const pages = await getText(); this.need(pages);
+    const body = pages.map((p,i) => `<section><h2>Page ${i+1}</h2>\n` + p.map(l => `<p>${esc(lineText(l))}</p>`).join('\n') + '</section>').join('\n');
+    const out = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(baseName)}</title><style>body{font-family:sans-serif;max-width:800px;margin:2rem auto;line-height:1.6}section{border-bottom:1px solid #ddd;padding-bottom:1rem}</style></head><body>${body}</body></html>`;
+    download(new Blob([out], {type:'text/html;charset=utf-8'}), baseName + '.html');
+  },
+  async docx(){
+    const pages = await getText(); this.need(pages);
+    const body = pages.map((p,i) =>
+      `<div ${i? 'style="page-break-before:always"':''}>` + p.map(l => `<p>${esc(lineText(l))}</p>`).join('') + '</div>').join('');
+    const out = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>${esc(baseName)}</title></head><body>${body}</body></html>`;
+    download(new Blob(['\ufeff', out], {type:'application/msword'}), baseName + '.doc');
+  },
+  async rtf(){
+    const pages = await getText(); this.need(pages);
+    const enc = s => s.replace(/\\/g,'\\\\').replace(/[{}]/g,m=>'\\'+m)
+      .replace(/[^\x00-\x7f]/g, ch => '\\u' + (ch.charCodeAt(0) > 32767 ? ch.charCodeAt(0)-65536 : ch.charCodeAt(0)) + '?');
+    const out = '{\\rtf1\\ansi\\deff0 ' + pages.map(p => p.map(l => enc(lineText(l)) + '\\par').join('\n')).join('\n\\page\n') + '}';
+    download(new Blob([out], {type:'application/rtf'}), baseName + '.rtf');
+  },
+  async csv(){
+    const pages = await getText(); this.need(pages);
+    const rows = pages.flat();
+    const out = rows.map(r => r.map(c => '"' + c.replace(/"/g,'""') + '"').join(',')).join('\r\n');
+    download(new Blob(['\ufeff', out], {type:'text/csv;charset=utf-8'}), baseName + '.csv');
+  },
+  async json(){
+    const pages = await getText();
+    const out = {file: baseName + '.pdf', pageCount: pdf.numPages,
+      pages: pages.map((p,i) => ({page:i+1, lines:p.map(lineText)}))};
+    download(new Blob([JSON.stringify(out,null,2)], {type:'application/json'}), baseName + '.json');
+  },
+  async xlsx(){
+    const pages = await getText(); this.need(pages);
+    const wb = XLSX.utils.book_new();
+    pages.forEach((p,i) => {
+      const ws = XLSX.utils.aoa_to_sheet(p.length ? p : [['']]);
+      XLSX.utils.book_append_sheet(wb, ws, ('Page ' + (i+1)).slice(0,31));
+    });
+    XLSX.writeFile(wb, baseName + '.xlsx');
+  },
+  async pptx(){
+    const ppt = new PptxGenJS();
+    for(let p=1;p<=pdf.numPages;p++){
+      const r = await renderPage(p, 'jpg', 2);
+      ppt.defineLayout({name:'L'+p, width:r.w/144, height:r.h/144});
+      ppt.layout = 'L'+p;
+      const s = ppt.addSlide();
+      s.addImage({data:r.dataUrl, x:0, y:0, w:r.w/144, h:r.h/144});
+      progress(p/pdf.numPages);
+    }
+    await ppt.writeFile({fileName: baseName + '.pptx'});
+  },
+  async png(){ await this.images('png'); },
+  async jpg(){ await this.images('jpg'); },
+  async images(type){
+    if(pdf.numPages === 1){
+      const r = await renderPage(1, type, 2.5);
+      r.canvas.toBlob(b => download(b, `${baseName}.${type}`), r.mime, 0.92);
+      return;
+    }
+    const zip = new JSZip();
+    for(let p=1;p<=pdf.numPages;p++){
+      const r = await renderPage(p, type, 2);
+      zip.file(`${baseName}_page${p}.${type}`, r.dataUrl.split(',')[1], {base64:true});
+      progress(p/pdf.numPages);
+    }
+    const blob = await zip.generateAsync({type:'blob'});
+    download(blob, `${baseName}_${type}.zip`);
+  },
+  need(pages){
+    if(!hasText(pages)) throw new Error('NOTEXT');
+  }
+};
+
+$('formats').addEventListener('click', async e => {
+  const btn = e.target.closest('button'); if(!btn || btn.disabled || !pdf) return;
+  const f = btn.dataset.f;
+  document.querySelectorAll('#formats button').forEach(b => b.disabled = true);
+  status('Convert aaguthu... konjam wait pannunga', ''); progress(0);
+  try{
+    await conv[f]();
+    progress(1);
+    status('✅ Mudinjidichu! File download aagiduchu.', 'ok');
+  }catch(err){
+    console.error(err);
+    status(err.message === 'NOTEXT'
+      ? 'Indha PDF-la text illa (scanned PDF). "PowerPoint" illa "Images" option use pannunga.'
+      : 'Convert panna mudiyala: ' + err.message, 'err');
+  }
+  setTimeout(()=>progress(null), 800);
+  document.querySelectorAll('#formats button').forEach(b => b.disabled = false);
+});
+</script>
+</body>
+</html>
